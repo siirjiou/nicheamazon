@@ -3,7 +3,7 @@
   publish = ".next"
 
 # Use the official Next plugin so Netlify bundles your Next API routes correctly
-[plugins]
+[[plugins]]
   package = "@netlify/plugin-nextjs"
 
 [dev]

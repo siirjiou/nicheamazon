@@ -1,0 +1,15 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+# Use the official Next plugin so Netlify bundles your Next API routes correctly
+[plugins]
+  package = "@netlify/plugin-nextjs"
+
+[dev]
+  command = "npm run dev"
+  port = 3000
+
+[build.environment]
+  NODE_VERSION = "18"
+

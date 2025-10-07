@@ -1,0 +1,20 @@
+{
+	"geolocation": {
+		"data": {
+			"city": "Mila",
+			"country": {
+				"code": "DZ",
+				"name": "Algeria"
+			},
+			"subdivision": {
+				"code": "43",
+				"name": "Mila"
+			},
+			"timezone": "Africa/Algiers",
+			"latitude": 36.3438,
+			"longitude": 6.2292,
+			"postalCode": "43000"
+		},
+		"timestamp": 1759857090571
+	}
+}

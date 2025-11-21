@@ -1,3 +1,4 @@
+// src/services/api.ts
 import type { NicheResult, FindNichesParams } from "../types"
 
 export const MARKETPLACES = [
@@ -5,7 +6,6 @@ export const MARKETPLACES = [
   { code: "US", name: "United States", label: "US — United States", id: "ATVPDKIKX0DER" },
   { code: "CA", name: "Canada", label: "CA — Canada", id: "A2EUQ1WTGCTBG2" },
   { code: "MX", name: "Mexico", label: "MX — Mexico", id: "A1AM78C64UM0Y8" },
-
   // Europe
   { code: "UK", name: "United Kingdom", label: "UK — United Kingdom", id: "A1F83G8C2ARO7P" },
   { code: "IE", name: "Ireland", label: "IE — Ireland", id: "A28R8C7NBKEWEA" },
@@ -17,62 +17,114 @@ export const MARKETPLACES = [
   { code: "SE", name: "Sweden", label: "SE — Sweden", id: "A2NODRKZP88ZB9" },
   { code: "PL", name: "Poland", label: "PL — Poland", id: "A1C3SOZRARQ6R3" },
   { code: "BE", name: "Belgium", label: "BE — Belgium", id: "AMEN7PMS3EDWL" },
-
   // Middle East
   { code: "AE", name: "United Arab Emirates", label: "AE — United Arab Emirates", id: "A2VIGQ35RCS4UG" },
   { code: "SA", name: "Saudi Arabia", label: "SA — Saudi Arabia", id: "A17E79C6D8DWNP" },
   { code: "EG", name: "Egypt", label: "EG — Egypt", id: "ARBP9OOSHTCHU" },
   { code: "TR", name: "Turkey", label: "TR — Turkey", id: "A33AVAJ2PDY3EV" },
-
   // Asia-Pacific
   { code: "JP", name: "Japan", label: "JP — Japan", id: "A1VC38T7YXB528" },
   { code: "AU", name: "Australia", label: "AU — Australia", id: "A39IBJ37TRP1C6" },
   { code: "SG", name: "Singapore", label: "SG — Singapore", id: "A19VAU5U5O7RUS" },
   { code: "IN", name: "India", label: "IN — India", id: "A21TJRUUN4KGV" },
-
   // South America
   { code: "BR", name: "Brazil", label: "BR — Brazil", id: "A2Q3Y263D00KWC" },
-
   // Additional
   { code: "CN", name: "China", label: "CN — China", id: "AAHKV2X7AFYLW" },
 ]
 
-
-// const API_PROXY = "/api/ox"
 const API_PROXY = "/api/ox"
 
+// Same domain logic as we use in the UI
+const getAmazonDomain = (code: string) => {
+  const upper = code.toUpperCase()
+  const domainMap: Record<string, string> = {
+    US: "com",
+    UK: "co.uk",
+    CA: "ca",
+    MX: "com.mx",
+    BE: "com.be",
+    FR: "fr",
+    DE: "de",
+    IT: "it",
+    ES: "es",
+    NL: "nl",
+    SE: "se",
+    PL: "pl",
+    IE: "ie",
+    AE: "ae",
+    SA: "sa",
+    EG: "eg",
+    TR: "com.tr",
+    JP: "co.jp",
+    AU: "com.au",
+    SG: "sg",
+    IN: "in",
+    BR: "com.br",
+    CN: "cn",
+  }
+  return domainMap[upper] || upper.toLowerCase()
+}
 
+/**
+ * LIST QUERY – get matching niches for a keyword
+ * (this is what runs on the search page: "Matching niches for 'lamp' in DE")
+ */
 const GET_NICHES_QUERY = `
-query getNiches($filter: NicheFilter!, $useNewQuery: Boolean, $searchImprovementsEnabled: Boolean) {
-  niches(
-    filter: $filter
-    useNewQuery: $useNewQuery
-    searchImprovementsEnabled: $searchImprovementsEnabled
+  query getNiches(
+    $filter: NicheFilter!
+    $useNewQuery: Boolean
+    $searchImprovementsEnabled: Boolean
   ) {
-    nicheId
-    obfuscatedMarketplaceId
-    nicheTitle
-    nicheSummary {
-      searchVolumeT360
-      searchVolumeGrowthT180
-      maximumAverageUnitsSoldT360
-      avgPriceT360
+    niches(
+      filter: $filter
+      useNewQuery: $useNewQuery
+      searchImprovementsEnabled: $searchImprovementsEnabled
+    ) {
+      nicheId
+      obfuscatedMarketplaceId
+      nicheTitle
+      nicheSummary {
+        searchVolumeT360
+        searchVolumeGrowthT180
+        searchVolumeGrowthT360
+        maximumAverageUnitsSoldT360
+        avgPriceT360
+        productCount
+        __typename
+      }
       __typename
     }
-    __typename
   }
-}`
+`
 
+/**
+ * DETAIL QUERY – single niche with launchPotential + asinMetrics
+ * (this is the query you pasted: "query getNiche($nicheInput: NicheInput!) { ... }")
+ */
 const GET_NICHE_DETAILS_QUERY = `
-query getNicheWithPurchaseDrivers($nicheInput: NicheInput!) {
-  niche(request: $nicheInput) {
-    launchPotential {
-      avgReviewCount { currentValue }
-      newProductsLaunchedT360 { currentValue }
-      successfulLaunchesT360 { currentValue }
+  query getNiche($nicheInput: NicheInput!) {
+    niche(request: $nicheInput) {
+      launchPotential {
+        avgReviewCount { currentValue }
+        newProductsLaunchedT360 { currentValue }
+        successfulLaunchesT360 { currentValue }
+        top5ProductsClickShare { currentValue }
+        sellingPartnerCount { currentValue }
+        avgBestSellerRank { currentValue }
+        __typename
+      }
+      asinMetrics(request: $nicheInput) {
+        asin
+        brand
+        customerRating
+        totalReviews
+        __typename
+      }
+      __typename
     }
   }
-}`
+`
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const randomUniform = (min: number, max: number) => Math.random() * (max - min) + min
@@ -85,8 +137,8 @@ async function postWithRetry<T>(
   maxRetries = 3,
 ): Promise<T> {
   let lastErr: unknown
-
   const extraHeaders: HeadersInit = {}
+
   if (perRequestHeaders?.csrfToken) extraHeaders["x-amz-csrf"] = perRequestHeaders.csrfToken.trim()
   if (perRequestHeaders?.cookie) extraHeaders["x-amz-cookie"] = perRequestHeaders.cookie.trim()
   if (perRequestHeaders?.countryCode) extraHeaders["x-amz-country"] = perRequestHeaders.countryCode.trim()
@@ -95,15 +147,15 @@ async function postWithRetry<T>(
     try {
       console.log("[v0] Making request to:", API_PROXY, "with country:", perRequestHeaders?.countryCode)
       const url = API_PROXY
-const res = await fetch(url, {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    ...extraHeaders, // includes x-amz-csrf, x-amz-cookie, x-amz-country if present
-  },
-  body: JSON.stringify(data),
-})
 
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...extraHeaders,
+        },
+        body: JSON.stringify(data),
+      })
 
       console.log("[v0] Response status:", res.status, "Content-Type:", res.headers.get("content-type"))
 
@@ -121,9 +173,12 @@ const res = await fetch(url, {
       }
 
       const jsonResponse = await res.json()
-      if (jsonResponse?.errors) {
-        throw new Error(`GraphQL Error: ${JSON.stringify(jsonResponse.errors)}`)
+
+      // Do NOT hard fail when GraphQL returns partial data + errors.
+      if ((jsonResponse as any)?.errors) {
+        log(`GraphQL reported errors: ${JSON.stringify((jsonResponse as any).errors)}`)
       }
+
       return jsonResponse as T
     } catch (error) {
       lastErr = error
@@ -134,7 +189,7 @@ const res = await fetch(url, {
     }
   }
 
-  throw lastErr instanceof Error ? lastErr : new Error("Failed after all retries.")
+  throw (lastErr instanceof Error ? lastErr : new Error("Failed after all retries."))
 }
 
 export const findNiches = async (params: FindNichesParams): Promise<void> => {
@@ -143,6 +198,7 @@ export const findNiches = async (params: FindNichesParams): Promise<void> => {
   log(`Processing keyword: "${keyword}" for ${countryCode} marketplace`)
   console.log("[v0] findNiches called with countryCode:", countryCode)
 
+  // 1) LIST NICHES FOR THIS KEYWORD
   const nichesData = {
     query: GET_NICHES_QUERY,
     operationName: "getNiches",
@@ -159,7 +215,9 @@ export const findNiches = async (params: FindNichesParams): Promise<void> => {
   }
 
   try {
-    const nichesResponse = await postWithRetry<{ data?: { niches: any[] } }>(nichesData, log, {
+    const nichesResponse = await postWithRetry<{
+      data?: { niches: any[] }
+    }>(nichesData, log, {
       csrfToken,
       cookie,
       countryCode,
@@ -174,6 +232,9 @@ export const findNiches = async (params: FindNichesParams): Promise<void> => {
 
     log(`Found ${niches.length} potential niches for "${keyword}". Analyzing details...`)
 
+    const domain = getAmazonDomain(countryCode)
+
+    // 2) FOR EACH NICHE: CALL DETAIL QUERY (WITH asinMetrics)
     for (const niche of niches) {
       const nicheId = niche.nicheId
       const nicheTitle = niche.nicheTitle
@@ -183,7 +244,7 @@ export const findNiches = async (params: FindNichesParams): Promise<void> => {
 
       const detailData = {
         query: GET_NICHE_DETAILS_QUERY,
-        operationName: "getNicheWithPurchaseDrivers",
+        operationName: "getNiche",
         variables: {
           nicheInput: {
             nicheId,
@@ -193,46 +254,170 @@ export const findNiches = async (params: FindNichesParams): Promise<void> => {
       }
 
       const detailResponse = await postWithRetry<{
-        data?: { niche?: { launchPotential?: any } }
+        data?: {
+          niche?: {
+            launchPotential?: any
+            asinMetrics?: any[]
+          }
+        }
       }>(detailData, log, { csrfToken, cookie, countryCode })
 
-      const launchPotential = detailResponse.data?.niche?.launchPotential
+      const nicheData = detailResponse.data?.niche
+      const launchPotential = nicheData?.launchPotential
+      const asinMetrics: any[] = Array.isArray(nicheData?.asinMetrics) ? nicheData!.asinMetrics : []
 
       if (!launchPotential) {
         log(`Skipping niche "${nicheTitle}" due to missing launch data.`)
         continue
       }
 
+      // --- BASE METRICS (from list summary) ---
       const total_search_volumes = Number(summary?.searchVolumeT360 ?? 0)
-      const growth_ratio = Number(summary?.searchVolumeGrowthT180 ?? 0)
+      const growth_ratio = Number(summary?.searchVolumeGrowthT180 ?? 0) // 180d growth (ratio)
+      const growth_yoy_ratio = Number(summary?.searchVolumeGrowthT360 ?? 0) // YoY ratio
+      const growth_yoy_pct = growth_yoy_ratio * 100
+
       const total_units_sold = Number(summary?.maximumAverageUnitsSoldT360 ?? 0)
       const avg_price = Number(summary?.avgPriceT360 ?? 0)
+      const productCount = Number(summary?.productCount ?? 0)
+
       const avg_reviews_number = Number(launchPotential?.avgReviewCount?.currentValue ?? 0)
       const new_products_launched = Number(launchPotential?.newProductsLaunchedT360?.currentValue ?? 0)
-      const successful_products_launched = Number(launchPotential?.successfulLaunchesT360?.currentValue ?? 0)
+      const successful_products_launched = Number(
+        launchPotential?.successfulLaunchesT360?.currentValue ?? 0,
+      )
 
-      log(`  - Checking: "${nicheTitle}" (Reviews: ${avg_reviews_number}, Price: ${avg_price.toFixed(2)})`)
+      const sellingPartnerCount = Number(launchPotential?.sellingPartnerCount?.currentValue ?? 0)
+      const avgTopSellerRank = Number(launchPotential?.avgBestSellerRank?.currentValue ?? 0)
 
-      if (
+      // --- COMPETITION METRICS (from launchPotential + asinMetrics) ---
+      // top 5 click share (ratio 0–1) -> percentage
+      const rawTop5ClickShare = Number(launchPotential?.top5ProductsClickShare?.currentValue ?? 0)
+      const top5ClickShare = rawTop5ClickShare * 100
+
+      // Take top 15 competitors from asinMetrics
+      const topCompetitors = asinMetrics.slice(0, 15)
+
+      let sumRating = 0
+      let countRating = 0
+      let sumReviews = 0
+      let countReviews = 0
+      const brandCounts: Record<string, number> = {}
+
+      for (const m of topCompetitors) {
+        const rating = Number(m.customerRating ?? 0)
+        if (!Number.isNaN(rating) && rating > 0) {
+          sumRating += rating
+          countRating++
+        }
+
+        const reviewCount = Number(m.totalReviews ?? 0)
+        if (!Number.isNaN(reviewCount) && reviewCount > 0) {
+          sumReviews += reviewCount
+          countReviews++
+        }
+
+        const brand = String(m.brand || "").trim() || "UNKNOWN"
+        brandCounts[brand] = (brandCounts[brand] || 0) + 1
+      }
+
+      const avgRatingTop15 = countRating ? sumRating / countRating : 0
+      const avgReviewCountTop15 = countReviews ? sumReviews / countReviews : 0
+
+      const competitorsCount = topCompetitors.length || 1
+      let maxBrandCount = 0
+      Object.values(brandCounts).forEach((c) => {
+        if (c > maxBrandCount) maxBrandCount = c
+      })
+
+      const top5BrandShare = (maxBrandCount / competitorsCount) * 100
+      const brandDominance = top5BrandShare >= 40 // 40%+ of top 15 from same brand
+
+      // Top 5 ASINs / Brands (first to fifth)
+      const top5 = topCompetitors.slice(0, 5)
+      const topAsins = top5.map((m) => String(m.asin || "").trim())
+      const topBrands = top5.map((m) => String(m.brand || "").trim())
+
+      log(
+        `  - Checking: "${nicheTitle}" (Reviews: ${avg_reviews_number.toFixed(
+          0,
+        )}, Price: ${avg_price.toFixed(
+          2,
+        )}, ProdCount: ${productCount}, GrowthYoY: ${growth_yoy_pct.toFixed(
+          1,
+        )}%, Top5ClickShare: ${top5ClickShare.toFixed(
+          1,
+        )}%, Top5BrandShare: ${top5BrandShare.toFixed(
+          1,
+        )}%, AvgRatingTop15: ${avgRatingTop15.toFixed(
+          2,
+        )}, AvgReviewsTop15: ${avgReviewCountTop15.toFixed(0)}, SellingPartners: ${sellingPartnerCount})`,
+      )
+
+      // --- FILTERS ---
+
+      // Basic demand / price / reviews filters
+      const passesBasicFilters =
         total_search_volumes >= filters.minSearchVolume &&
         growth_ratio > filters.minGrowthRatio &&
         total_units_sold >= filters.minUnitsSold &&
         avg_price >= filters.minPrice &&
+        (!filters.maxPrice || avg_price <= filters.maxPrice) &&
         avg_reviews_number <= filters.maxReviews
-      ) {
+
+      // Competition filters (0 / undefined = "no limit")
+      const passesCompetitionFilters =
+        (!filters.minGrowthYoY || growth_yoy_pct >= filters.minGrowthYoY) &&
+        (!filters.maxProductCount || productCount <= filters.maxProductCount) &&
+        (!filters.maxTop5ClickShare || top5ClickShare <= filters.maxTop5ClickShare) &&
+        (!filters.maxTop5BrandShare || top5BrandShare <= filters.maxTop5BrandShare) &&
+        (!filters.maxAvgRatingTop15 || avgRatingTop15 <= filters.maxAvgRatingTop15) &&
+        (!filters.maxAvgReviewCountTop15 ||
+          avgReviewCountTop15 <= filters.maxAvgReviewCountTop15) &&
+        (!filters.excludeBrandDominance || !brandDominance)
+
+      if (passesBasicFilters && passesCompetitionFilters) {
         const growth_percentage = growth_ratio * 100
+
+        // Simple composite score (tune later if you want)
+        const score =
+          growth_percentage +
+          total_units_sold / 1000 +
+          avg_price -
+          avgReviewCountTop15 / 1000 -
+          top5ClickShare * 0.2 -
+          top5BrandShare * 0.2 -
+          (brandDominance ? 5 : 0)
+
         log(`✅ Found a promising niche: "${nicheTitle}"`)
+
+        const nicheUrl = `https://sellercentral.amazon.${domain}/opportunity-explorer/explore/niche/${nicheId}/launch-potential`
+
         const result: NicheResult = {
           nicheId,
           nicheTitle,
           totalSearchVolumes: total_search_volumes,
           growthPercentage: growth_percentage,
+          growthYoYPercentage: growth_yoy_pct,
           totalUnitsSold: total_units_sold,
           avgPrice: avg_price,
           avgReviewsNumber: avg_reviews_number,
           newProductsLaunched: new_products_launched,
           successfulProductsLaunched: successful_products_launched,
+          productCount,
+          top5ClickShare,
+          top5BrandShare,
+          avgRatingTop15,
+          avgReviewCountTop15,
+          brandDominance,
+          sellingPartnerCount,
+          avgTopSellerRank,
+          topAsins,
+          topBrands,
+          score,
+          nicheUrl,
         }
+
         addResult(result)
       }
     }

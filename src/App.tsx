@@ -1,3 +1,4 @@
+// app/App.tsx
 "use client"
 
 import type React from "react"
@@ -16,11 +17,26 @@ const App: React.FC = () => {
   const [keywords, setKeywords] = useState<string>("")
 
   const [filters, setFilters] = useState<NicheFilters>({
+    // Demand / price
     minSearchVolume: 360000,
     minGrowthRatio: 0,
     minUnitsSold: 1000,
     minPrice: 20,
+    maxPrice: 70,
     maxReviews: 1000,
+
+    // Growth YoY (use 5% as default)
+    minGrowthYoY: 5,
+
+    // Competition defaults
+    maxProductCount: 3000, // max 3000 products in niche
+    maxTop5ClickShare: 55, // 0.55 => 55% top 5 click share
+    maxTop5BrandShare: undefined,
+    maxAvgRatingTop15: 4.5,
+    maxAvgReviewCountTop15: 3000,
+
+    // Exclude dominant brands by default (≥ 40% share)
+    excludeBrandDominance: true,
   })
 
   const [isFiltersVisible, setIsFiltersVisible] = useState<boolean>(false)
@@ -29,35 +45,47 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false)
 
   // === ETA state + live ticker ===
-  const [etaAgg, setEtaAgg] = useState<{ total: number; done: number; firstCheckAt: number; endBy: number }>({
+  const [etaAgg, setEtaAgg] = useState<{
+    total: number
+    done: number
+    firstCheckAt: number
+    endBy: number
+  }>({
     total: 0,
     done: 0,
     firstCheckAt: 0,
     endBy: 0,
   })
+
   const [nowTs, setNowTs] = useState(() => Date.now())
+
   useEffect(() => {
     if (etaAgg.endBy <= 0) return
     const id = setInterval(() => setNowTs(Date.now()), 1000)
     return () => clearInterval(id)
   }, [etaAgg.endBy])
-  const remainingMs = Math.max(0, etaAgg.endBy - nowTs)
 
+  const remainingMs = Math.max(0, etaAgg.endBy - nowTs)
   const isSearchingRef = useRef(false)
 
   const addLog = useCallback((message: string) => {
     const timestamp = new Date().toLocaleTimeString()
     setLogs((prev) => [...prev, `[${timestamp}] ${message}`])
 
+    // === ETA parsing ===
+
     // A) “Found N potential niches …”
     {
       const m = message.match(/Found\s+(\d+)\s+potential niches for\s+"[^"]+"/i)
       if (m) {
         const found = Number(m[1] || 0)
-        if (found > 0) setEtaAgg((a) => ({ ...a, total: a.total + found }))
+        if (found > 0) {
+          setEtaAgg((a) => ({ ...a, total: a.total + found }))
+        }
         return
       }
     }
+
     // B) “- Checking: …”
     if (/-\s*Checking:/i.test(message)) {
       setEtaAgg((a) => {
@@ -72,6 +100,7 @@ const App: React.FC = () => {
       })
       return
     }
+
     // C) finished
     if (/Search process finished/i.test(message)) {
       setEtaAgg({ total: 0, done: 0, firstCheckAt: 0, endBy: 0 })
@@ -85,8 +114,15 @@ const App: React.FC = () => {
     const hours = Math.floor((s % 86400) / 3600)
     const mins = Math.floor((s % 3600) / 60)
     const secs = s % 60
-    if (days > 0) return `${days}d ${String(hours).padStart(2,"0")}:${String(mins).padStart(2,"0")}:${String(secs).padStart(2,"0")}`
-    return `${String(hours).padStart(2,"0")}:${String(mins).padStart(2,"0")}:${String(secs).padStart(2,"0")}`
+    if (days > 0)
+      return `${days}d ${String(hours).padStart(2, "0")}:${String(mins).padStart(
+        2,
+        "0",
+      )}:${String(secs).padStart(2, "0")}`
+    return `${String(hours).padStart(2, "0")}:${String(mins).padStart(
+      2,
+      "0",
+    )}:${String(secs).padStart(2, "0")}`
   }
 
   const handleSearch = useCallback(async () => {
@@ -95,13 +131,17 @@ const App: React.FC = () => {
       addLog("Please fill in all required fields: CSRF Token, Cookie, and Keywords.")
       return
     }
+
     setIsLoading(true)
     isSearchingRef.current = true
     setResults([])
     setLogs([])
     addLog(`Starting search process for ${countryCode} marketplace...`)
 
-    const keywordList = keywords.split("\n").map((k) => k.trim()).filter(Boolean)
+    const keywordList = keywords
+      .split("\n")
+      .map((k) => k.trim())
+      .filter(Boolean)
     addLog(`Found ${keywordList.length} keywords to process.`)
 
     try {
@@ -110,6 +150,7 @@ const App: React.FC = () => {
           addLog("Search process was cancelled.")
           break
         }
+
         await findNiches({
           keyword,
           marketplaceId,
@@ -144,6 +185,7 @@ const App: React.FC = () => {
   const requestTokensFromExtension = useCallback(() => {
     addLog("Asking extension for Cookie/CSRF…")
     let replied = false
+
     function onMsg(e: MessageEvent) {
       if (e.origin !== window.location.origin || e.data?.type !== "NICHES_TOKENS") return
       replied = true
@@ -153,12 +195,18 @@ const App: React.FC = () => {
         return
       }
       if (e.data.cookie) {
-        setCookie(String(e.data.cookie).replace(/[\r\n]+/g, "").replace(/;\s+/g, ";").trim())
+        setCookie(
+          String(e.data.cookie)
+            .replace(/[\r\n]+/g, "")
+            .replace(/;\s+/g, ";")
+            .trim(),
+        )
       }
       if (e.data.csrf) setCsrfToken(e.data.csrf)
       if (e.data.country) setCountryCode(String(e.data.country).toUpperCase())
       addLog("Auto-filled Cookie/CSRF from extension.")
     }
+
     window.addEventListener("message", onMsg)
     window.postMessage({ type: "NICHES_REQ_TOKENS" }, window.location.origin)
     setTimeout(() => {
@@ -180,104 +228,335 @@ const App: React.FC = () => {
     addLog("Downloaded keywords_template.xlsx")
   }, [addLog])
 
-  const onExcelSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    try {
-      const buf = await file.arrayBuffer()
-      const wb = XLSX.read(buf)
-      const firstSheet = wb.SheetNames[0]
-      const ws = wb.Sheets[firstSheet]
-      const rows = XLSX.utils.sheet_to_json<{ keyword?: string }>(ws, { defval: "" })
-      const list = rows.map(r => String(r.keyword ?? "").trim()).filter(Boolean)
-      if (list.length === 0) {
-        addLog('No keywords found. Put them under a column named "keyword".')
-        return
+  const onExcelSelect = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0]
+      if (!file) return
+      try {
+        const buf = await file.arrayBuffer()
+        const wb = XLSX.read(buf)
+        const firstSheet = wb.SheetNames[0]
+        const ws = wb.Sheets[firstSheet]
+        const rows = XLSX.utils.sheet_to_json<{ keyword?: string }>(ws, { defval: "" })
+        const list = rows
+          .map((r) => String(r.keyword ?? "").trim())
+          .filter(Boolean)
+        if (list.length === 0) {
+          addLog('No keywords found. Put them under a column named "keyword".')
+          return
+        }
+        setKeywords(list.join("\n"))
+        addLog(`Loaded ${list.length} keywords from "${file.name}".`)
+        e.currentTarget.value = ""
+      } catch (err) {
+        addLog(
+          `Failed to read Excel: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        )
+        console.error(err)
       }
-      setKeywords(list.join("\n"))
-      addLog(`Loaded ${list.length} keywords from "${file.name}".`)
-      e.currentTarget.value = ""
-    } catch (err) {
-      addLog(`Failed to read Excel: ${err instanceof Error ? err.message : String(err)}`)
-      console.error(err)
-    }
-  }, [addLog])
+    },
+    [addLog],
+  )
 
-  // === Slide-in Filters Panel ===
+  // === Slide-in Filters Panel (RIGHT, wider, two-column layout) ===
   const FilterPanel = () => (
     <>
       <div
-        className={`fixed inset-0 bg-black/60 z-40 transition-opacity ${isFiltersVisible ? "opacity-100" : "opacity-0 pointer-events-none"}`}
+        className={`fixed inset-0 bg-black/60 z-40 transition-opacity ${
+          isFiltersVisible ? "opacity-100" : "opacity-0 pointer-events-none"
+        }`}
         onClick={() => setIsFiltersVisible(false)}
       />
       <div
-        className={`fixed top-0 right-0 h-full w-full max-w-sm bg-gray-800 shadow-2xl z-50 transform transition-transform duration-300 ease-in-out ${isFiltersVisible ? "translate-x-0" : "translate-x-full"}`}
+        className={`fixed top-0 right-0 h-full w-full max-w-xl bg-gray-800 shadow-2xl z-50 transform transition-transform duration-300 ease-in-out ${
+          isFiltersVisible ? "translate-x-0" : "translate-x-full"
+        }`}
       >
         <div className="p-6 h-full flex flex-col">
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-2xl font-semibold text-white">Filters</h2>
-            <button onClick={() => setIsFiltersVisible(false)} className="text-gray-400 hover:text-white">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+            <button
+              onClick={() => setIsFiltersVisible(false)}
+              className="text-gray-400 hover:text-white"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-6 w-6"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
             </button>
           </div>
 
-          <div className="space-y-4 overflow-y-auto pr-2 flex-grow">
-            <label className="block">
-              <span className="block text-sm text-gray-400 mb-1">Min Search Volume</span>
-              <input
-                type="number"
-                className="w-full rounded-lg bg-gray-900 border border-gray-700 text-gray-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                value={filters.minSearchVolume}
-                onChange={(e) => setFilters({ ...filters, minSearchVolume: Number(e.target.value) })}
-                disabled={isLoading}
-              />
-            </label>
+          <div className="overflow-y-auto pr-2 flex-grow">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Demand / price filters */}
+              <label className="block">
+                <span className="block text-sm text-gray-400 mb-1">
+                  Min Search Volume (360d)
+                </span>
+                <input
+                  type="number"
+                  className="w-full rounded-lg bg-gray-900 border border-gray-700 text-gray-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  value={filters.minSearchVolume}
+                  onChange={(e) =>
+                    setFilters({
+                      ...filters,
+                      minSearchVolume: Number(e.target.value || 0),
+                    })
+                  }
+                  disabled={isLoading}
+                />
+              </label>
 
-            <label className="block">
-              <span className="block text-sm text-gray-400 mb-1">Min Growth Ratio</span>
-              <input
-                type="number"
-                step="0.01"
-                className="w-full rounded-lg bg-gray-900 border border-gray-700 text-gray-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                value={filters.minGrowthRatio}
-                onChange={(e) => setFilters({ ...filters, minGrowthRatio: Number(e.target.value) })}
-                disabled={isLoading}
-              />
-            </label>
+              <label className="block">
+                <span className="block text-sm text-gray-400 mb-1">
+                  Min Growth Ratio (180d)
+                </span>
+                <input
+                  type="number"
+                  step="0.01"
+                  className="w-full rounded-lg bg-gray-900 border border-gray-700 text-gray-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  value={filters.minGrowthRatio}
+                  onChange={(e) =>
+                    setFilters({
+                      ...filters,
+                      minGrowthRatio: Number(e.target.value || 0),
+                    })
+                  }
+                  disabled={isLoading}
+                />
+              </label>
 
-            <label className="block">
-              <span className="block text-sm text-gray-400 mb-1">Min Units Sold</span>
-              <input
-                type="number"
-                className="w-full rounded-lg bg-gray-900 border border-gray-700 text-gray-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                value={filters.minUnitsSold}
-                onChange={(e) => setFilters({ ...filters, minUnitsSold: Number(e.target.value) })}
-                disabled={isLoading}
-              />
-            </label>
+              <label className="block">
+                <span className="block text-sm text-gray-400 mb-1">
+                  Min Growth YoY (%)
+                </span>
+                <input
+                  type="number"
+                  step="0.1"
+                  className="w-full rounded-lg bg-gray-900 border border-gray-700 text-gray-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  value={filters.minGrowthYoY ?? ""}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    setFilters({
+                      ...filters,
+                      minGrowthYoY: v === "" ? undefined : Number(v),
+                    })
+                  }}
+                  disabled={isLoading}
+                />
+              </label>
 
-            <label className="block">
-              <span className="block text-sm text-gray-400 mb-1">Min Price</span>
-              <input
-                type="number"
-                step="0.01"
-                className="w-full rounded-lg bg-gray-900 border border-gray-700 text-gray-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                value={filters.minPrice}
-                onChange={(e) => setFilters({ ...filters, minPrice: Number(e.target.value) })}
-                disabled={isLoading}
-              />
-            </label>
+              <label className="block">
+                <span className="block text-sm text-gray-400 mb-1">
+                  Min Units Sold (360d)
+                </span>
+                <input
+                  type="number"
+                  className="w-full rounded-lg bg-gray-900 border border-gray-700 text-gray-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  value={filters.minUnitsSold}
+                  onChange={(e) =>
+                    setFilters({
+                      ...filters,
+                      minUnitsSold: Number(e.target.value || 0),
+                    })
+                  }
+                  disabled={isLoading}
+                />
+              </label>
 
-            <label className="block">
-              <span className="block text-sm text-gray-400 mb-1">Max Reviews</span>
-              <input
-                type="number"
-                className="w-full rounded-lg bg-gray-900 border border-gray-700 text-gray-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                value={filters.maxReviews}
-                onChange={(e) => setFilters({ ...filters, maxReviews: Number(e.target.value) })}
-                disabled={isLoading}
-              />
-            </label>
+              <label className="block">
+                <span className="block text-sm text-gray-400 mb-1">
+                  Min Price
+                </span>
+                <input
+                  type="number"
+                  step="0.01"
+                  className="w-full rounded-lg bg-gray-900 border border-gray-700 text-gray-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  value={filters.minPrice}
+                  onChange={(e) =>
+                    setFilters({
+                      ...filters,
+                      minPrice: Number(e.target.value || 0),
+                    })
+                  }
+                  disabled={isLoading}
+                />
+              </label>
+
+              <label className="block">
+                <span className="block text-sm text-gray-400 mb-1">
+                  Max Price
+                </span>
+                <input
+                  type="number"
+                  step="0.01"
+                  className="w-full rounded-lg bg-gray-900 border border-gray-700 text-gray-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  value={filters.maxPrice ?? ""}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    setFilters({
+                      ...filters,
+                      maxPrice: v === "" ? undefined : Number(v),
+                    })
+                  }}
+                  disabled={isLoading}
+                />
+              </label>
+
+              <label className="block">
+                <span className="block text-sm text-gray-400 mb-1">
+                  Max Avg Reviews (global)
+                </span>
+                <input
+                  type="number"
+                  className="w-full rounded-lg bg-gray-900 border border-gray-700 text-gray-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  value={filters.maxReviews}
+                  onChange={(e) =>
+                    setFilters({
+                      ...filters,
+                      maxReviews: Number(e.target.value || 0),
+                    })
+                  }
+                  disabled={isLoading}
+                />
+              </label>
+
+              {/* Competition filters */}
+              <div className="md:col-span-2">
+                <hr className="border-gray-700 my-2" />
+                <p className="text-sm text-gray-400 font-semibold">
+                  Competition filters
+                </p>
+              </div>
+
+              <label className="block">
+                <span className="block text-sm text-gray-400 mb-1">
+                  Max Product Count
+                </span>
+                <input
+                  type="number"
+                  className="w-full rounded-lg bg-gray-900 border border-gray-700 text-gray-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  value={filters.maxProductCount ?? ""}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    setFilters({
+                      ...filters,
+                      maxProductCount: v === "" ? undefined : Number(v),
+                    })
+                  }}
+                  disabled={isLoading}
+                />
+              </label>
+
+              <label className="block">
+                <span className="block text-sm text-gray-400 mb-1">
+                  Max Top 5 Click Share (%)
+                </span>
+                <input
+                  type="number"
+                  step="0.1"
+                  className="w-full rounded-lg bg-gray-900 border border-gray-700 text-gray-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  value={filters.maxTop5ClickShare ?? ""}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    setFilters({
+                      ...filters,
+                      maxTop5ClickShare: v === "" ? undefined : Number(v),
+                    })
+                  }}
+                  disabled={isLoading}
+                />
+              </label>
+
+              <label className="block">
+                <span className="block text-sm text-gray-400 mb-1">
+                  Max Top 5 Brand Share (%)
+                </span>
+                <input
+                  type="number"
+                  step="0.1"
+                  className="w-full rounded-lg bg-gray-900 border border-gray-700 text-gray-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  value={filters.maxTop5BrandShare ?? ""}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    setFilters({
+                      ...filters,
+                      maxTop5BrandShare: v === "" ? undefined : Number(v),
+                    })
+                  }}
+                  disabled={isLoading}
+                />
+              </label>
+
+              <label className="block">
+                <span className="block text-sm text-gray-400 mb-1">
+                  Max Avg Rating (Top 15)
+                </span>
+                <input
+                  type="number"
+                  step="0.01"
+                  className="w-full rounded-lg bg-gray-900 border border-gray-700 text-gray-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  value={filters.maxAvgRatingTop15 ?? ""}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    setFilters({
+                      ...filters,
+                      maxAvgRatingTop15: v === "" ? undefined : Number(v),
+                    })
+                  }}
+                  disabled={isLoading}
+                />
+              </label>
+
+              <label className="block">
+                <span className="block text-sm text-gray-400 mb-1">
+                  Max Avg Reviews (Top 15)
+                </span>
+                <input
+                  type="number"
+                  className="w-full rounded-lg bg-gray-900 border border-gray-700 text-gray-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  value={filters.maxAvgReviewCountTop15 ?? ""}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    setFilters({
+                      ...filters,
+                      maxAvgReviewCountTop15: v === "" ? undefined : Number(v),
+                    })
+                  }}
+                  disabled={isLoading}
+                />
+              </label>
+
+              <label className="flex items-center gap-2 pt-2 md:col-span-2">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-gray-600 bg-gray-900 text-purple-600"
+                  checked={!!filters.excludeBrandDominance}
+                  onChange={(e) =>
+                    setFilters({
+                      ...filters,
+                      excludeBrandDominance: e.target.checked,
+                    })
+                  }
+                  disabled={isLoading}
+                />
+                <span className="text-sm text-gray-300">
+                  Exclude niches with dominant brand (≥ 40% share)
+                </span>
+              </label>
+            </div>
           </div>
 
           <button
@@ -291,50 +570,149 @@ const App: React.FC = () => {
     </>
   )
 
+  // === Export / Copy helpers ===
+  const FLAT_HEADERS = [
+    "nicheId",
+    "nicheTitle",
+    "nicheUrl",
+    "totalSearchVolumes",
+    "growthPercentage",
+    "growthYoYPercentage",
+    "totalUnitsSold",
+    "avgPrice",
+    "avgReviewsNumber",
+    "productCount",
+    "top5ClickShare",
+    "top5BrandShare",
+    "avgRatingTop15",
+    "avgReviewCountTop15",
+    "brandDominance",
+    "sellingPartnerCount",
+    "avgTopSellerRank",
+    "newProductsLaunched",
+    "successfulProductsLaunched",
+    "topAsin1",
+    "topAsin2",
+    "topAsin3",
+    "topAsin4",
+    "topAsin5",
+    "topBrand1",
+    "topBrand2",
+    "topBrand3",
+    "topBrand4",
+    "topBrand5",
+    "score",
+  ] as const
+
+  const buildFlatRows = (data: NicheResult[]) =>
+    data.map((r) => ({
+      nicheId: r.nicheId,
+      nicheTitle: r.nicheTitle,
+      nicheUrl: r.nicheUrl,
+      totalSearchVolumes: r.totalSearchVolumes,
+      growthPercentage: r.growthPercentage,
+      growthYoYPercentage: r.growthYoYPercentage,
+      totalUnitsSold: r.totalUnitsSold,
+      avgPrice: r.avgPrice,
+      avgReviewsNumber: r.avgReviewsNumber,
+      productCount: r.productCount,
+      top5ClickShare: r.top5ClickShare,
+      top5BrandShare: r.top5BrandShare,
+      avgRatingTop15: r.avgRatingTop15,
+      avgReviewCountTop15: r.avgReviewCountTop15,
+      brandDominance: r.brandDominance,
+      sellingPartnerCount: r.sellingPartnerCount,
+      avgTopSellerRank: r.avgTopSellerRank,
+      newProductsLaunched: r.newProductsLaunched,
+      successfulProductsLaunched: r.successfulProductsLaunched,
+      topAsin1: r.topAsins[0] ?? "",
+      topAsin2: r.topAsins[1] ?? "",
+      topAsin3: r.topAsins[2] ?? "",
+      topAsin4: r.topAsins[3] ?? "",
+      topAsin5: r.topAsins[4] ?? "",
+      topBrand1: r.topBrands[0] ?? "",
+      topBrand2: r.topBrands[1] ?? "",
+      topBrand3: r.topBrands[2] ?? "",
+      topBrand4: r.topBrands[3] ?? "",
+      topBrand5: r.topBrands[4] ?? "",
+      score: r.score,
+    }))
+
   const exportResults = useCallback(() => {
-  if (!results.length) {
-    addLog("No results to export.");
-    return;
-  }
+    if (!results.length) {
+      addLog("No results to export.")
+      return
+    }
 
-  // Make values export-safe (flatten objects/arrays to JSON strings)
-  const rows = results.map((r) => {
-    const obj = r as any;
-    const out: Record<string, any> = {};
-    Object.entries(obj).forEach(([k, v]) => {
-      out[k] = (v !== null && typeof v === "object") ? JSON.stringify(v) : v;
-    });
-    return out;
-  });
+    const rows = buildFlatRows(results)
 
-  const ws = XLSX.utils.json_to_sheet(rows);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "results");
+    const ws = XLSX.utils.json_to_sheet(rows, {
+      header: FLAT_HEADERS as unknown as string[],
+    })
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, "results")
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-")
+    const filename = `niches_results_${countryCode}_${stamp}.xlsx`
+    XLSX.writeFile(wb, filename)
+    addLog(`Exported ${results.length} rows to "${filename}".`)
+  }, [results, countryCode, addLog])
 
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const filename = `niches_results_${countryCode}_${stamp}.xlsx`;
+  const copyResults = useCallback(async () => {
+    if (!results.length) {
+      addLog("No results to copy.")
+      return
+    }
 
-  XLSX.writeFile(wb, filename);
-  addLog(`Exported ${results.length} rows to "${filename}".`);
-}, [results, countryCode, addLog]);
+    if (!navigator.clipboard) {
+      addLog("Clipboard API not available in this browser.")
+      return
+    }
 
+    const rows = buildFlatRows(results)
+
+    const headerLine = FLAT_HEADERS.join("\t")
+    const lines = rows.map((row) =>
+      FLAT_HEADERS.map((h) => {
+        const v = (row as any)[h]
+        return v === undefined || v === null ? "" : String(v)
+      }).join("\t"),
+    )
+
+    const tsv = [headerLine, ...lines].join("\n")
+
+    try {
+      await navigator.clipboard.writeText(tsv)
+      addLog(`Copied ${results.length} rows to clipboard in tab-separated format.`)
+    } catch (err) {
+      addLog(
+        `Failed to copy results: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      )
+      console.error(err)
+    }
+  }, [results, addLog])
 
   // === Layout ===
   return (
     <div className="min-h-screen bg-gray-900 text-gray-200 font-sans flex">
       <FilterPanel />
 
-      {/* LEFT SIDEBAR (pushed left, fixed width) */}
+      {/* LEFT SIDEBAR */}
       <aside className="w-[450px] flex-shrink-0 bg-gray-800/60 p-6 h-screen overflow-y-auto border-r border-gray-700/40">
         <header className="mb-8">
           <h1 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-600">
             Amazon Niche Finder
           </h1>
-          <p className="mt-1 text-md text-gray-400">Discover untapped opportunities.</p>
+          <p className="mt-1 text-md text-gray-400">
+            Discover untapped opportunities.
+          </p>
         </header>
 
         <div className="space-y-4">
-          <h2 className="text-xl font-semibold mb-2 text-white">Search Settings</h2>
+          <h2 className="text-xl font-semibold mb-2 text-white">
+            Search Settings
+          </h2>
 
           <label className="block">
             <span className="block text-sm text-gray-400 mb-1">Country</span>
@@ -345,13 +723,17 @@ const App: React.FC = () => {
               disabled={isLoading}
             >
               {MARKETPLACES.map((m) => (
-                <option key={m.code} value={m.code}>{m.code} — {m.name}</option>
+                <option key={m.code} value={m.code}>
+                  {m.code} — {m.name}
+                </option>
               ))}
             </select>
           </label>
 
           <label className="block">
-            <span className="block text-sm text-gray-400 mb-1">Marketplace ID</span>
+            <span className="block text-sm text-gray-400 mb-1">
+              Marketplace ID
+            </span>
             <select
               className="w-full rounded-lg bg-gray-900 border border-gray-700 text-gray-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
               value={marketplaceId}
@@ -359,13 +741,17 @@ const App: React.FC = () => {
               disabled={isLoading}
             >
               {MARKETPLACES.map((m) => (
-                <option key={m.id} value={m.id}>{m.code} — {m.id}</option>
+                <option key={m.id} value={m.id}>
+                  {m.code} — {m.id}
+                </option>
               ))}
             </select>
           </label>
 
           <label className="block">
-            <span className="block text-sm text-gray-400 mb-1">anti-csrftoken-a2z</span>
+            <span className="block text-sm text-gray-400 mb-1">
+              anti-csrftoken-a2z
+            </span>
             <input
               className="w-full rounded-lg bg-gray-900 border border-gray-700 text-gray-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
               placeholder="Paste your anti-csrftoken-a2z"
@@ -386,7 +772,14 @@ const App: React.FC = () => {
               style={{ overflowX: "auto", whiteSpace: "pre" }}
               value={cookie}
               onChange={(e) => setCookie(e.target.value)}
-              onBlur={(e) => setCookie(e.target.value.replace(/[\r\n]+/g, "").replace(/;\s+/g, ";").trim())}
+              onBlur={(e) =>
+                setCookie(
+                  e.target.value
+                    .replace(/[\r\n]+/g, "")
+                    .replace(/;\s+/g, ";")
+                    .trim(),
+                )
+              }
               disabled={isLoading}
             />
           </label>
@@ -401,7 +794,9 @@ const App: React.FC = () => {
           </button>
 
           <label className="block pt-4">
-            <span className="block text-sm text-gray-400 mb-2">Keywords (one per line)</span>
+            <span className="block text-sm text-gray-400 mb-2">
+              Keywords (one per line)
+            </span>
 
             <div className="flex items-center gap-3 mb-2">
               <button
@@ -469,24 +864,33 @@ const App: React.FC = () => {
         </div>
       </aside>
 
-      {/* RIGHT: BIG Content area (no horizontal swipe) */}
+      {/* RIGHT CONTENT */}
       <main className="flex-1 p-8 overflow-y-auto h-screen">
         <div className="w-full mx-auto space-y-8">
           {/* ETA / Progress */}
           <div className="bg-gray-800/60 rounded-2xl p-4 shadow-lg border border-gray-700/40 flex items-center gap-6">
             <div>
               <span className="text-sm text-gray-400">Progress</span>
-              <div className="text-lg font-semibold">{etaAgg.done} / {etaAgg.total}</div>
+              <div className="text-lg font-semibold">
+                {etaAgg.done} / {etaAgg.total}
+              </div>
             </div>
             <div>
               <span className="text-sm text-gray-400">ETA</span>
-              <div className="text-lg font-semibold">{etaAgg.endBy > 0 ? formatDuration(remainingMs) : "—"}</div>
+              <div className="text-lg font-semibold">
+                {etaAgg.endBy > 0 ? formatDuration(remainingMs) : "—"}
+              </div>
             </div>
             {etaAgg.total > 0 && (
               <div className="flex-1 h-2.5 bg-gray-700 rounded-full overflow-hidden">
                 <div
                   className="h-full bg-purple-600 transition-[width] duration-300"
-                  style={{ width: `${Math.min(100, (etaAgg.done / Math.max(1, etaAgg.total)) * 100)}%` }}
+                  style={{
+                    width: `${Math.min(
+                      100,
+                      (etaAgg.done / Math.max(1, etaAgg.total)) * 100,
+                    )}%`,
+                  }}
                 />
               </div>
             )}
@@ -495,16 +899,25 @@ const App: React.FC = () => {
           {/* Logs */}
           <LogView logs={logs} />
 
-          {/* Results */}
-          <div className="flex items-center justify-end">
-  <button
-    onClick={exportResults}
-    disabled={!results.length || isLoading}
-    className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 disabled:cursor-not-allowed transition-colors font-semibold"
-  >
-    Export results
-  </button>
-</div>
+          {/* Results + export / copy */}
+          <div className="flex items-center justify-end gap-3">
+            <button
+              onClick={copyResults}
+              disabled={!results.length || isLoading}
+              className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed transition-colors font-semibold"
+            >
+              Copy results
+            </button>
+
+            <button
+              onClick={exportResults}
+              disabled={!results.length || isLoading}
+              className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 disabled:cursor-not-allowed transition-colors font-semibold"
+            >
+              Export results
+            </button>
+          </div>
+
           <ResultsTable results={results} countryCode={countryCode} />
         </div>
       </main>
@@ -513,3 +926,4 @@ const App: React.FC = () => {
 }
 
 export default App
+
